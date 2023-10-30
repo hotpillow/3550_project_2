@@ -1,2 +1,3 @@
-# 3550_project_neutral
-run with npm run test
+# 3550_project_2
+
+run server with node server.js

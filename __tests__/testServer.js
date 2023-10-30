@@ -3,14 +3,15 @@
 // Got this from ChatGPT after asking it how to use JEST to test this shit
 // npm run test
 import request from 'supertest';
-import { app, server, generateKey } from '../server';
+import { app, server, generateKey, initializeDatabase } from '../server';
 
-jest.setTimeout(10000); // timeout has to be this long otherwise it times out
+jest.setTimeout(10000); // Timeout has to be this long otherwise it times out
 
 describe('Express server', () => {
 	beforeAll(async () => {
+		await initializeDatabase();
 		await generateKey(Math.floor(Date.now() / 1000) + 3600);
-		await generateKey(Math.floor(Date.now() / 1000) - 3600);
+		await generateKey(Math.floor(Date.now() / 1000) - 360);
 	});
 
 	// Test for the /.well-known/jwks.json endpoint
@@ -24,14 +25,12 @@ describe('Express server', () => {
 	it('POST /auth should return valid JWT', async () => {
 		const response = await request(app).post('/auth').timeout(500);
 		expect(response.status).toBe(200);
-		// You might want to add more checks here based on the token or its structure
 	});
 
 	// Test POST /auth endpoint for expired JWT
 	it('POST /auth?expired=true should return expired JWT', async () => {
 		const response = await request(app).post('/auth?expired=true').timeout(500);
 		expect(response.status).toBe(401);
-		// You might want to add more checks here based on the token or its structure
 	});
 
 	// Test for invalid HTTP methods
@@ -46,7 +45,7 @@ describe('Express server', () => {
 	});
 });
 
-// properly closing the server
+// Properly closing the server
 afterAll((done) => {
 	server.close(done);
 });

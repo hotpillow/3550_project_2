@@ -1,44 +1,101 @@
 // Used node-jose: https://github.com/cisco/node-jose
+// run with node server.js
 import express from 'express';
 import jose from 'node-jose';
-
-const keystore = jose.JWK.createKeyStore();
+import Database from 'better-sqlite3';
+import { unlinkSync } from 'fs'; // for deleting the db file
 
 export const app = express();
+const db = await initializeDatabase();
+const keystore = jose.JWK.createKeyStore();
 const PORT = 8080;
-
-// Make into JSON object bc that's how we can use JSON.stringify()
 const basePayload = { username: 'userABC', password: 'password123' };
 
-// Create an empty object so the object can dynamically grow
-const expTimes = {};
+function cleanup(status) {
+	// delete all rows from the `keys` db
+	if (status == 0) {
+		unlinkSync('./totally_not_my_privateKeys.db');
+	}
+
+	process.exit(0);
+}
+
+export async function initializeDatabase() {
+	let db = new Database('./totally_not_my_privateKeys.db', {
+		verbose: console.log,
+	});
+
+	db.exec(`
+    CREATE TABLE IF NOT EXISTS keys (
+        kid INTEGER PRIMARY KEY AUTOINCREMENT,
+        key BLOB NOT NULL,
+        exp INTEGER NOT NULL
+    );
+  `);
+
+	return db;
+}
 
 // Generate a key with the passed in expTime
 export async function generateKey(expTime) {
 	const key = await keystore.generate('RSA', 2048);
-	expTimes[key.kid] = expTime;
+
+	try {
+		const stmt = db.prepare('INSERT INTO keys (key, exp) VALUES (?, ?);');
+
+		const result = stmt.run(key.toPEM(true), expTime);
+
+		if (result.changes < 1) {
+			console.error('No rows were inserted.');
+		}
+	} catch (error) {
+		console.error('SQL Error:', error);
+	}
+
+	if (expTime < Math.floor(Date.now() / 1000)) {
+		keystore.remove(key);
+	}
+
 	return key;
 }
-// Create the two keys
-generateKey(Math.floor(Date.now() / 1000) + 3600); // keystore.all()[0];
-generateKey(Math.floor(Date.now() / 1000) - 3600); // keystore.all()[1];
+
+generateKey(Math.floor(Date.now() / 1000) + 36000);
+generateKey(Math.floor(Date.now() / 1000) - 120);
 
 // Signing function
 export async function getSignedJWT(payload, expiredTest) {
 	// Check table for expiration time
-	// if expiredText = true, then store it at [1]
-	let key;
+	let dbKey;
 	if (expiredTest) {
-		key = keystore.all()[1];
+		dbKey = await new Promise((resolve, reject) => {
+			try {
+				const stmt = db.prepare('SELECT * FROM keys WHERE kid = ?');
+				const result = stmt.get(BigInt(2));
+				resolve(result);
+			} catch (error) {
+				console.warn('Error querying the database: ', error);
+				reject();
+			}
+		});
 	} else {
-		// Future functionality, get random key
-		key = keystore.all()[0];
+		dbKey = await new Promise((resolve, reject) => {
+			try {
+				const stmt = db.prepare('SELECT * FROM keys WHERE kid = ?');
+				const result = stmt.get(BigInt(1));
+				resolve(result);
+			} catch (error) {
+				console.warn('Error querying the database: ', error);
+				reject();
+			}
+		});
 	}
+
+	// Get the key from the keystore
+	var key = await jose.JWK.asKey(dbKey.key, 'pem');
+
 	// If expired, then set exp to the expiration time, then remove the key
-	if (expTimes[key.kid] < Math.floor(Date.now() / 1000)) {
-		payload.exp = expTimes[key.kid]; // gradebot wants the expired time
-		delete expTimes[key.kid];
-		keystore.remove(key);
+	if (dbKey.exp < Math.floor(Date.now() / 1000)) {
+		payload.exp = dbKey.exp; // gradebot wants the expired time
 	}
 
 	// Set the values to the corresponding kid and alg
@@ -46,7 +103,7 @@ export async function getSignedJWT(payload, expiredTest) {
 		{ format: 'compact', fields: { kid: key.kid, alg: key.alg } },
 		key
 	)
-		.update(JSON.stringify(payload)) // \Stringify works bc it's a JSON object
+		.update(JSON.stringify(payload)) // Stringify works bc it's a JSON object
 		.final();
 
 	return token;
@@ -91,4 +148,12 @@ app.post('/auth', async (req, res) => {
 // LISTEN (returns a server)
 export const server = app.listen(PORT, () => {
 	console.log(`Server is running on http://localhost:${PORT}`);
+});
+
+// Handle program close
+process.on('exit', cleanup);
+process.on('SIGINT', cleanup);
+process.on('uncaughtException', (err) => {
+	console.error('Uncaught Exception:', err);
+	cleanup();
 });

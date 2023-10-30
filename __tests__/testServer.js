@@ -1,6 +1,6 @@
 /* eslint-env jest */
 // ^ has to be at the top
-// Got this from ChatGPT after asking it how to use JEST to test this shit
+// Got this from ChatGPT after asking it how to use JEST to test this
 // npm run test
 import request from 'supertest';
 import { app, server, generateKey, initializeDatabase } from '../server';

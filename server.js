@@ -1,9 +1,13 @@
 // Used node-jose: https://github.com/cisco/node-jose
+// Used ChatGPT for part 3: asked for AES encryption
 // run with node server.js
 import express from 'express';
 import jose from 'node-jose';
 import Database from 'better-sqlite3';
 import { unlinkSync } from 'fs'; // for deleting the db file
+// import AES from 'crypto-es/aes';
+// import encUtf8 from 'crypto-es/enc-utf8';
+import rateLimit from 'express-rate-limit';
 
 export const app = express();
 const db = await initializeDatabase();
@@ -20,18 +24,39 @@ function cleanup(status) {
 	process.exit(0);
 }
 
+// // Function to encrypt data using AES
+// function encryptData(data, key) {
+// 	return AES.encrypt(data, key).toString();
+// }
+
+// // Function to decrypt data using AES
+// function decryptData(encryptedData, key) {
+// 	return AES.decrypt(encryptedData, key).toString(encUtf8);
+// }
+
 export async function initializeDatabase() {
 	let db = new Database('./totally_not_my_privateKeys.db', {
 		verbose: console.log,
 	});
 
+	// 	db.exec(`
+	//     CREATE TABLE IF NOT EXISTS keys (
+	//         kid INTEGER PRIMARY KEY AUTOINCREMENT,
+	//         key BLOB NOT NULL,
+	//         exp INTEGER NOT NULL
+	//     );
+	//   `);
+
 	db.exec(`
-    CREATE TABLE IF NOT EXISTS keys (
-        kid INTEGER PRIMARY KEY AUTOINCREMENT,
-        key BLOB NOT NULL,
-        exp INTEGER NOT NULL
-    );
-  `);
+	CREATE TABLE IF NOT EXISTS users(
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		username TEXT NOT NULL UNIQUE,
+		password_hash TEXT NOT NULL,
+		email TEXT UNIQUE,
+		date_registered TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		last_login TIMESTAMP      
+	);
+	`);
 
 	return db;
 }
@@ -39,11 +64,15 @@ export async function initializeDatabase() {
 // Generate a key with the passed in expTime
 export async function generateKey(expTime) {
 	const key = await keystore.generate('RSA', 2048);
+	// const privateKey = key.toPEM(true);
 
 	try {
+		// const encryptedPrivateKey = encryptData(privateKey, process.env.NOT_MY_KEY);
+
 		const stmt = db.prepare('INSERT INTO keys (key, exp) VALUES (?, ?);');
 
 		const result = stmt.run(key.toPEM(true), expTime);
+		// const result = stmt.run(encryptedPrivateKey, expTime);
 
 		if (result.changes < 1) {
 			console.error('No rows were inserted.');
@@ -109,6 +138,16 @@ export async function getSignedJWT(payload, expiredTest) {
 	return token;
 }
 
+// Rate limiter for /auth
+const limiter = rateLimit({
+	windowMs: 1000, // 1 min
+	limit: 10, // Limit each IP to 10 requests per `window`
+	message: 'Too many requests, please try again later.',
+});
+
+// For all /auth posts
+app.use('/auth', limiter);
+
 // GET
 app.all('/.well-known/jwks.json', (req, res, next) => {
 	if (req.method !== 'GET') {
@@ -123,7 +162,7 @@ app.get('/.well-known/jwks.json', (req, res) => {
 	return res.status(200).json(keys);
 });
 
-// POST
+// POST /auth
 app.all('/auth', (req, res, next) => {
 	if (req.method !== 'POST') {
 		return res.status(405).end();
@@ -142,6 +181,24 @@ app.post('/auth', async (req, res) => {
 		return res.status(200).send(token);
 	} catch (error) {
 		res.status(500).send('Error generating JWT');
+	}
+});
+
+// POST / register
+app.all('/register', (req, res, next) => {
+	if (req.method !== 'POST') {
+		return res.status(405).end();
+	}
+	next();
+});
+
+app.post('/register', async (req, res) => {
+	try {
+		return res
+			.status(201)
+			.send({ password: '0b170dfe-ed87-4b65-bed4-9e9ccbd9cb07' });
+	} catch (error) {
+		return res.status(500).send('Error registering user');
 	}
 });
 

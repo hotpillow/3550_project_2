@@ -2,6 +2,7 @@
 	"dependencies": {
 		"better-sqlite3": "^9.0.0",
 		"crypto-es": "^2.1.0",
+		"dotenv": "^16.3.1",
 		"express": "^4.18.2",
 		"express-rate-limit": "^7.1.5",
 		"jest-coverage-badges": "^1.1.2",

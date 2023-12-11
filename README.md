@@ -1,3 +1,3 @@
-# 3550_project_2
+# 3550_project_3
 
 run server with node server.js
